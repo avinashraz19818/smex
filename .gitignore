@@ -1,0 +1,29 @@
+# Secrets — kabhi git me mat daalo
+.env
+
+# Telegram session files (login ke baad bante hain, secret hote hain)
+*.session
+*.session-journal
+
+# venv + logs + pid (server pe khud banenge)
+.venv/
+logs/
+bot.pid
+nohup.out
+
+# Browser profiles
+playwright_profile_*/
+
+# Debug / win screenshots
+debug_*.png
+auto_win_popup_*.png
+hbet_win_*.png
+
+__pycache__/
+.env
+__pycache__/
+*.pyc
+pw-browsers/
+tmp/
+.venv/
+venv/

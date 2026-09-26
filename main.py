@@ -19,7 +19,10 @@ from pyrogram.errors import FloodWait
 
 load_dotenv()
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+BASE_DIR = os.path.dirname(__file__)
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(BASE_DIR, "pw-browsers"))
+
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 def load_config():
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -31,10 +34,12 @@ bot = Client(
     "orchestrator_bot",
     api_id=int(os.getenv("API_ID", 1234567)),
     api_hash=os.getenv("API_HASH", "abcdef"),
-    bot_token=os.getenv("BOT_TOKEN")
+    bot_token=os.getenv("BOT_TOKEN"),
+    in_memory=True,
 )
 
 client_sessions = []
+client_slot_map = {}  # session_env ("CLIENT_1_SESSION") -> Client  (bot_setup /login ke liye)
 owner_sessions = {}
 browser_pools = {}
 
@@ -48,6 +53,7 @@ async def init_clients():
                 await c.start()
                 c.my_user = await c.get_me()
                 client_sessions.append(c)
+                client_slot_map[session_env] = c
                 print(f"✅ Started Global Client {i+1}: {c.my_user.first_name}")
                 try:
                     async for _ in c.get_dialogs(limit=50): pass
@@ -711,19 +717,43 @@ async def handle_emoji_id_command(client: Client, message: Message):
     lines = "\n".join(f"`{i}`" for i in ids)
     await message.reply_text(f"✅ Custom emoji ids:\n{lines}\n\nIn ids ko .env me daalo (TICK_EMOJI, MONEY_EMOJI, CROWN_EMOJI, FIRE_EMOJI).")
 
+# ---- Bot se poora setup: /login (OTP), wingo, links, emoji, owners ----
+# (bot_setup.py — session string / code edit kiye bina sab bot se)
+try:
+    import bot_setup
+    bot_setup.register(bot, {
+        "config": config,
+        "client_sessions": client_sessions,
+        "client_slot_map": client_slot_map,
+        "owner_sessions": owner_sessions,
+        "browser_pools": browser_pools,
+        "valid_emoji_ids": valid_emoji_ids,
+        "revalidate": validate_premium_emojis,
+        "do_bet": do_bet,
+        "do_dp": do_dp,
+    })
+    print("✅ Bot-setup module loaded (bot me /help bhejo)")
+except Exception as e:
+    print(f"⚠️ bot_setup load nahi hua: {e}")
+
 async def main():
     print("Initializing clients...")
     await init_clients()
     await validate_premium_emojis()
     print("Starting Orchestrator Bot...")
-    await bot.start()
+    try:
+        await bot.start()
+    except Exception as e:
+        print(f"Bot start nahi hua: {e}")
+        print("BOT_TOKEN ko BotFather se verify/regenerate karo. Userbot sessions ke liye /login se new session banao.")
+        raise
     me = await bot.get_me()
     print(f"✅ Orchestrator Bot started: @{me.username} ({me.first_name})")
 
     await start_browser_pools()
     keepalive_task = asyncio.create_task(browser_keepalive_loop())
 
-    print("🤖 Bot is active! Commands: /bet, /hbet, /refresh, /browsers, /dp, /emojiid")
+    print("🤖 Bot is active! Commands: /help, /login, /bet, /hbet, /refresh, /browsers, /dp, /emojiid")
 
     try:
         from pyrogram import idle

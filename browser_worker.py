@@ -3,6 +3,11 @@ import sys
 import json
 
 from dotenv import load_dotenv
+
+BASE_DIR = os.path.dirname(__file__)
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(BASE_DIR, "pw-browsers"))
+
+
 from playwright.sync_api import sync_playwright
 
 import wingo
