@@ -477,6 +477,7 @@ async def run_chat_simulation(mode, owner_id, owner_client, owner_cfg, bot_messa
     screenshot_paths = {}
     winning_number = None
     bet_amounts = {}
+    balances = {}
     failed_clients = {}
 
     wingo_accounts = owner_cfg.get("wingo_accounts", [])
@@ -485,10 +486,16 @@ async def run_chat_simulation(mode, owner_id, owner_client, owner_cfg, bot_messa
         line = line.strip()
         if line.startswith("WINNING_NUMBER="):
             winning_number = line.split("WINNING_NUMBER=")[1].strip()
+        elif line.startswith("BALANCE_"):
+            try:
+                key, val = line.split("=", 1)
+                balances[int(key.replace("BALANCE_", ""))] = val.strip()
+            except Exception:
+                pass
         elif line.startswith("BET_AMOUNT_"):
             try:
                 key, val = line.split("=", 1)
-                bet_amounts[int(key.replace("BET_AMOUNT_", ""))] = int(val.strip())
+                bet_amounts[int(key.replace("BET_AMOUNT_", ""))] = int(float(val.strip()))
             except Exception:
                 pass
         elif line.startswith("SUCCESS_SCREENSHOT_PATH_"):
@@ -496,10 +503,13 @@ async def run_chat_simulation(mode, owner_id, owner_client, owner_cfg, bot_messa
             client_idx = int(parts[0].replace("SUCCESS_SCREENSHOT_PATH_", ""))
             screenshot_paths[client_idx] = parts[1].strip()
         elif line.startswith("FAILED_CLIENT_INFO="):
-            parts = line.split("FAILED_CLIENT_INFO=")[1].split(":")
-            if len(parts) >= 3:
-                f_idx = int(parts[0])
-                failed_clients[f_idx] = (parts[1], parts[2])
+            # format: idx:phone:password — password me ':' ho sakta hai,
+            # isliye sirf pehle 2 colon split karte hain
+            payload = line.split("=", 1)[1]
+            idx_s, sep, rest = payload.partition(":")
+            phone, sep2, pwd = rest.partition(":")
+            if idx_s.isdigit() and phone:
+                failed_clients[int(idx_s)] = (phone, pwd)
 
     for i, w_cfg in enumerate(wingo_accounts):
         c_idx = i + 1
@@ -508,11 +518,13 @@ async def run_chat_simulation(mode, owner_id, owner_client, owner_cfg, bot_messa
 
     if failed_clients:
         for f_idx, (f_phone, f_pass) in failed_clients.items():
-            await bot_message.reply_text(
-                f"⚠️ ID {f_idx} bet nahi lga paayi (fund khatam ya error).\n"
-                f"📱 Phone: `{f_phone}`\n"
-                f"🔑 Pass: `{f_pass}`"
-            )
+            lines = [f"⚠️ ID {f_idx} bet nahi lga paayi (fund khatam ya error).",
+                     f"📱 Phone: `{f_phone}`",
+                     f"🔑 Pass: `{f_pass}`"]
+            bal = balances.get(f_idx)
+            if bal:
+                lines.append(f"💰 Balance dikha: `{bal}`")
+            await bot_message.reply_text("\n".join(lines))
 
     if not screenshot_paths:
         await bot_message.reply_text(f"❌ Kisi bhi ID se bet nahi lag paayi ya screenshot nahi mila.\nLogs:\n{output[-800:]}")
