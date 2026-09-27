@@ -1,11 +1,11 @@
 import os
 import sys
 import json
+import shutil
 
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(__file__)
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(BASE_DIR, "pw-browsers"))
 
 
 from playwright.sync_api import sync_playwright
@@ -36,10 +36,27 @@ def main():
     client = wingo.WingoClient(client_idx, phone, password, owner_id)
 
     with sync_playwright() as p:
+        chromium_path = (
+            os.getenv("SMEX_CHROMIUM_PATH")
+            or os.getenv("CHROMIUM_EXECUTABLE_PATH")
+            or shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or shutil.which("google-chrome")
+            or "/usr/bin/chromium-browser"
+        )
+
+        launch_options = {
+            "headless": HEADLESS,
+            **wingo.MOBILE_CONTEXT,
+        }
+
+        if chromium_path:
+            print(f"🌐 Using system Chromium: {chromium_path}", flush=True)
+            launch_options["executable_path"] = chromium_path
+
         with p.chromium.launch_persistent_context(
             wingo.profile_dir(client_idx, owner_id),
-            headless=HEADLESS,
-            **wingo.MOBILE_CONTEXT
+            **launch_options
         ) as context:
             page = context.pages[0] if context.pages else context.new_page()
 

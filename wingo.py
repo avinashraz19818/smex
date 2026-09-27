@@ -191,6 +191,62 @@ class WingoClient:
             pass
 
     def dismiss_announcements(self, page):
+        # Auto-close the site's password-change popup before any login click.
+        # This popup contains input[autocomplete="new-password"] and blocks
+        # pointer events on the real login button.
+        try:
+            page.evaluate(r"""() => {
+                const dialogs = [...document.querySelectorAll('div[role="dialog"]')];
+                for (const dialog of dialogs) {
+                    if (!dialog.querySelector('input[autocomplete="new-password"]')) {
+                        continue;
+                    }
+
+                    const buttons = [...dialog.querySelectorAll(
+                        'button, [role="button"], .van-button'
+                    )];
+
+                    const closeButton = buttons.find((button) =>
+                        /cancel|close|later|skip|not now|remind me later/i.test(
+                            (button.innerText || button.textContent || '').trim()
+                        )
+                    );
+
+                    if (closeButton) {
+                        closeButton.click();
+                    }
+
+                    dialog.style.setProperty('display', 'none', 'important');
+                    dialog.style.setProperty('visibility', 'hidden', 'important');
+                    dialog.setAttribute('aria-hidden', 'true');
+
+                    const popup = dialog.closest('.van-popup');
+                    if (popup) {
+                        popup.style.setProperty('display', 'none', 'important');
+                    }
+                }
+
+                const blockedOverlay = document.querySelector(
+                    'div[role="dialog"] input[autocomplete="new-password"]'
+                );
+
+                if (!blockedOverlay) {
+                    document.querySelectorAll('.van-overlay').forEach((overlay) => {
+                        const parentDialog = overlay.closest('div[role="dialog"]');
+                        if (parentDialog && !parentDialog.querySelector(
+                            'input[autocomplete="new-password"]'
+                        )) {
+                            return;
+                        }
+                        overlay.style.setProperty('display', 'none', 'important');
+                    });
+                    document.body.classList.remove('van-overflow-hidden');
+                }
+            }""")
+            time.sleep(0.3)
+        except Exception:
+            pass
+
         for _ in range(4):
             dismissed = False
 
@@ -249,8 +305,97 @@ class WingoClient:
             pass
         return False
 
+
+    def _home_url(self):
+        """Return the site's post-login home route."""
+        return self.login_url.split("#", 1)[0].rstrip("/") + "/#/"
+
+    def _wait_login_loader(self, page, timeout=15000):
+        """Do not click Login again while the site's login request is pending."""
+        try:
+            loader = page.locator(".ar-loading-view").first
+            loader.wait_for(state="hidden", timeout=timeout)
+        except Exception:
+            pass
+
+    def _confirm_home_popup(self, page):
+        """Close the Welcome/announcement Confirm popup shown on the home page.
+        Never click Confirm inside the password-change dialog."""
+        for _ in range(3):
+            try:
+                confirm = page.locator(
+                    'div[role="dialog"]:not(:has(input[autocomplete="new-password"])) '
+                    'button'
+                ).filter(has_text=re.compile(r"^\s*Confirm\s*$", re.I)).first
+
+                if confirm.is_visible(timeout=800):
+                    self.log("👉 Home popup ka Confirm click kar raha hoon...")
+                    confirm.click(timeout=2000)
+                    time.sleep(1)
+                    continue
+            except Exception:
+                pass
+            break
+
+        self.dismiss_announcements(page)
+
+    def _wait_after_login(self, page):
+        """Wait for login API/navigation, then perform the real user flow:
+        login page -> home page -> Confirm popup -> WinGo room -> 1Min tab."""
+        for _ in range(20):
+            self._wait_login_loader(page, timeout=1200)
+            self.dismiss_announcements(page)
+
+            try:
+                current = page.url or ""
+            except Exception:
+                current = ""
+
+            login_form_visible = False
+            try:
+                login_form_visible = page.locator(LOGIN_PHONE_SELECTOR).first.is_visible(
+                    timeout=300
+                )
+            except Exception:
+                pass
+
+            if "#/login" not in current and not login_form_visible:
+                break
+
+            time.sleep(1)
+
+        if self.is_logged_out(page):
+            return False
+
+        home = self._home_url()
+        self.log(f"🏠 Login successful — home page open kar raha hoon: {home}")
+        try:
+            page.goto(home)
+            time.sleep(3)
+        except Exception as e:
+            self.log(f"⚠️ Home page open error: {e}")
+            return False
+
+        self._confirm_home_popup(page)
+        self.setup_lottery_token(page)
+
+        self.log(f"🎮 WinGo 1Min room open kar raha hoon: {self.room_url}")
+        try:
+            page.goto(self.room_url)
+            time.sleep(4)
+            self._confirm_home_popup(page)
+            self.ensure_1min_tab(page)
+            time.sleep(2)
+        except Exception as e:
+            self.log(f"⚠️ WinGo room open error: {e}")
+            return False
+
+        return True
+
     def ensure_logged_in(self, page) -> bool:
-        time.sleep(2)
+        self.dismiss_announcements(page)
+        time.sleep(1)
+
         current_url = ""
         try:
             current_url = page.url
@@ -259,9 +404,11 @@ class WingoClient:
 
         phone_el = page.locator(LOGIN_PHONE_SELECTOR).first
         login_btn_el = page.locator(".p8-home__guest-btn--login").first
+
         needs_login = False
         try:
-            if ("#/login" in current_url or phone_el.is_visible(timeout=800)
+            if ("#/login" in current_url
+                    or phone_el.is_visible(timeout=800)
                     or login_btn_el.is_visible(timeout=800)):
                 needs_login = True
         except Exception:
@@ -270,43 +417,42 @@ class WingoClient:
         if not needs_login:
             return True
 
-        self.log("🔑 Logging in automatically...")
+        self.log("🔑 Login page open karke details fill kar raha hoon...")
+
         try:
             if "#/login" not in current_url:
                 page.goto(self.login_url)
                 time.sleep(2)
 
+            self.dismiss_announcements(page)
+
             phone_field = page.locator(LOGIN_PHONE_SELECTOR).first
-            phone_field.wait_for(state="visible", timeout=8000)
+            phone_field.wait_for(state="visible", timeout=10000)
             phone_field.fill(self.phone)
-            time.sleep(0.3)
 
             pwd_field = page.locator(LOGIN_PASS_SELECTOR).first
-            if pwd_field.is_visible(timeout=2000):
-                pwd_field.fill(self.password)
-                time.sleep(0.3)
-            else:
-                self.log("⚠️ Password field nahi mila — login page alag format ka hai")
+            pwd_field.wait_for(state="visible", timeout=5000)
+            pwd_field.fill(self.password)
 
             try:
-                rem_cb = page.locator(".signIn__container-rememberRow .van-checkbox").first
-                if rem_cb.is_visible(timeout=800) and rem_cb.get_attribute("aria-checked") == "false":
-                    rem_cb.click()
+                rem_cb = page.locator(
+                    ".signIn__container-rememberRow .van-checkbox"
+                ).first
+                if (rem_cb.is_visible(timeout=800)
+                        and rem_cb.get_attribute("aria-checked") == "false"):
+                    rem_cb.click(timeout=800)
             except Exception:
                 pass
 
+            self._wait_login_loader(page, timeout=3000)
+
             submit = page.locator(LOGIN_SUBMIT_SELECTOR).first
-            submit.click()
-            self.log("👉 Login button clicked, waiting for authentication...")
-            time.sleep(4)
-            self.dismiss_announcements(page)
-            self.setup_lottery_token(page)
-            # verify login actually happened
-            logged_out = self.is_logged_out(page)
-            if logged_out:
-                self.log("⚠️ Login ke baad bhi login page par hai — credentials/OTP check karo")
-                return False
-            return True
+            submit.wait_for(state="visible", timeout=5000)
+            submit.click(timeout=5000)
+
+            self.log("👉 Login button click ho gaya — loading complete hone ka wait...")
+            return self._wait_after_login(page)
+
         except Exception as e:
             self.log(f"❌ Auto-login error: {e}")
             return False
@@ -317,26 +463,7 @@ class WingoClient:
             page.goto(self.login_url)
             time.sleep(2)
             self.dismiss_announcements(page)
-
-            phone_field = page.locator(LOGIN_PHONE_SELECTOR).first
-            phone_field.wait_for(state="visible", timeout=10000)
-            phone_field.fill(self.phone)
-            time.sleep(0.3)
-
-            pwd_field = page.locator(LOGIN_PASS_SELECTOR).first
-            if pwd_field.is_visible(timeout=2000):
-                pwd_field.fill(self.password)
-                time.sleep(0.3)
-
-            page.locator(LOGIN_SUBMIT_SELECTOR).first.click()
-            self.log("👉 Login button clicked (force), waiting...")
-            time.sleep(4)
-            self.dismiss_announcements(page)
-            self.setup_lottery_token(page)
-            if self.is_logged_out(page):
-                return False
-            page.goto(self.room_url)
-            return self.ensure_wingo_room(page, attempts=3)
+            return self.ensure_logged_in(page)
         except Exception as e:
             self.log(f"❌ Force login fail: {e}")
             return False

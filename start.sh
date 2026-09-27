@@ -79,10 +79,32 @@ python -m pip install --upgrade pip -q
 pip install -r requirements.txt || { echo "❌ requirements install fail"; exit 1; }
 echo "✅ Requirements done."
 
-# ---- 5. playwright browser ----
-echo "🌐 Playwright chromium check..."
-python -m playwright install chromium || echo "⚠️ Chromium install me dikkat — agar browser error aaye to: sudo .venv/bin/playwright install-deps"
+# ---- 5. system chromium ----
+echo "🌐 System Chromium check..."
+CHROMIUM_BIN=""
+for candidate in \
+  "/usr/bin/chromium-browser" \
+  "/usr/bin/chromium" \
+  "/snap/bin/chromium" \
+  "/usr/bin/google-chrome-stable" \
+  "/usr/bin/google-chrome"; do
+  if [ -x "$candidate" ]; then
+    CHROMIUM_BIN="$candidate"
+    break
+  fi
+done
 
+if [ -z "$CHROMIUM_BIN" ]; then
+  echo "❌ System Chromium/Chrome nahi mila."
+  echo "   Install karo: apt install -y chromium-browser"
+  exit 1
+fi
+
+export SMEX_CHROMIUM_PATH="$CHROMIUM_BIN"
+export CHROMIUM_EXECUTABLE_PATH="$CHROMIUM_BIN"
+
+echo "✅ Chromium: $SMEX_CHROMIUM_PATH"
+"$SMEX_CHROMIUM_PATH" --version 2>/dev/null || true
 # ---- 6. .env check ----
 if [ ! -f ".env" ]; then
   echo "❌ .env file nahi mili!"

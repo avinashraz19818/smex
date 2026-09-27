@@ -4,7 +4,6 @@ import sys
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(__file__)
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.join(BASE_DIR, "pw-browsers"))
 
 from playwright.sync_api import sync_playwright
 
@@ -32,9 +31,20 @@ def run_betting_sequence():
     client = wingo.WingoClient(client_idx, phone, password, owner_id)
 
     with sync_playwright() as p:
+        chromium_path = (
+            os.getenv("SMEX_CHROMIUM_PATH")
+            or os.getenv("CHROMIUM_EXECUTABLE_PATH")
+            or "/usr/bin/chromium-browser"
+        )
+
         with p.chromium.launch_persistent_context(
             wingo.profile_dir(client_idx, owner_id),
             headless=HEADLESS,
+            executable_path=chromium_path,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
             **wingo.MOBILE_CONTEXT
         ) as context:
             page = context.pages[0] if context.pages else context.new_page()
